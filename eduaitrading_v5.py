@@ -34,23 +34,17 @@ def format_value(value, symbol):
 st.header("१. 🔍 प्रगत डेटा सोर्स आणि वेळेची निवड")
 col_sym, col_int, col_per, col_btn = st.columns([2, 1, 1, 1.5])
 
-with col_sym:
-    symbol = st.text_input("सिम्बॉल (उदा. ^NSEI, BTC-USD, EURUSD=X)", "^NSEI")
-with col_int:
-    interval = st.selectbox("टाइमफ्रेम", ["1h", "30m", "15m", "5m"], index=0)
-with col_per:
-    period = st.selectbox("डेटा कालावधी (मागील दिवस)", ["5d", "10d", "30d"], index=0)
-
+# load_data_and_analyze फंक्शनला सिम्बॉल, इंटरव्हल आणि पिरियडची थेट व्हॅल्यू पास करा
 @st.cache_data(ttl=600, show_spinner="डेटा आणि प्रगत विश्लेषण लोड करत आहे...")
-def load_data_and_analyze(symbol, interval, period):
-    df = yf.download(symbol, interval=interval, period=period)
+def load_data_and_analyze(symbol_val, interval_val, period_val): # (सुधारित) थेट व्हॅल्यू वापरा
+    df = yf.download(symbol_val, interval=interval_val, period=period_val)
     if df.empty or 'Close' not in df.columns: 
-        st.error(f"डेटा मिळाला नाही. सिम्बॉल: {symbol} तपासा.")
+        st.error(f"डेटा मिळाला नाही. सिम्बॉल: {symbol_val} तपासा.")
         return None
 
     # --- VIX डेटा लोड करा (फक्त Nifty साठी) ---
     vix_level = 15 # Default VIX value
-    if symbol.upper() == '^NSEI' or symbol.upper() == '^BSESN':
+    if symbol_val.upper() == '^NSEI' or symbol_val.upper() == '^BSESN':
         vix_data = yf.download("^VIX", interval="1d", period="30d")
         # इथे 'Close' कॉलम उपलब्ध असल्याची खात्री करा
         if not vix_data.empty and 'Close' in vix_data.columns: 
@@ -79,19 +73,18 @@ def load_data_and_analyze(symbol, interval, period):
         'VIX': vix_level, 
         'SENTIMENT': df['SENTIMENT_INDEX'][-1], 
         'VOLUME_TREND': df['VOLUME_TREND'][-1], 
-        'Symbol': symbol
+        'Symbol': symbol_val
     }
-    st.session_state.decimal_places = get_decimal_places(symbol)
+    st.session_state.decimal_places = get_decimal_places(symbol_val)
     st.session_state.call_result = None
     
-    st.success(f"✅ डेटा लोड यशस्वी: {symbol} | CMP: {format_value(CMP, symbol)}")
+    st.success(f"✅ डेटा लोड यशस्वी: {symbol_val} | CMP: {format_value(CMP, symbol_val)}")
     return True
 
-def load_data_callback():
-    # Streamlit च्या कॅशिंग सिस्टीममुळे फंक्शनला थेट कॉल करा
-    load_data_and_analyze(st.session_state.symbol_input, st.session_state.interval_select, st.session_state.period_select)
+# def load_data_callback(): # (callback function ची गरज नाही)
+#     load_data_and_analyze(st.session_state.symbol_input, st.session_state.interval_select, st.session_state.period_select)
 
-# सिम्बॉल, इंटरव्हल आणि पिरियडसाठी की जोडा
+# सिम्बॉल, इंटरव्हल आणि पिरियडसाठी की जोडा (व्हॅल्यूज Session State मध्ये आपोआप सेव्ह होतील)
 with col_sym:
     symbol = st.text_input("सिम्बॉल (उदा. ^NSEI, BTC-USD, EURUSD=X)", "^NSEI", key='symbol_input')
 with col_int:
@@ -102,11 +95,8 @@ with col_per:
 with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("१. 📊 डेटा लोड करा", type="primary"):
-        # फंक्शन कॉल करण्यापूर्वी इनपुट व्हॅल्यूज session state मध्ये सेव्ह करा
-        st.session_state.symbol_input = symbol
-        st.session_state.interval_select = interval
-        st.session_state.period_select = period
-        load_data_and_analyze(symbol, interval, period)
+        # सुधारणा: Session State मध्ये व्हॅल्यू सेव्ह न करता थेट कॉम्पोनंट्समधील व्हॅल्यू लोड फंक्शनला पास करा.
+        load_data_and_analyze(st.session_state.symbol_input, st.session_state.interval_select, st.session_state.period_select)
 
 st.markdown("---")
 
