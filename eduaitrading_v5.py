@@ -26,6 +26,8 @@ def get_decimal_places(symbol):
 
 def format_value(value, symbol):
     dec = st.session_state.decimal_places
+    # Handles cases where value might be a string (like 'N/A')
+    if isinstance(value, str): return value
     return f"{value:,.{dec}f}"
 
 # --- SECTION 1: DATA LOADING ---
@@ -46,9 +48,14 @@ def load_data_and_analyze(symbol, interval, period):
         st.error(f"डेटा मिळाला नाही. सिम्बॉल: {symbol} तपासा.")
         return None
 
-    # --- VIX डेटा लोड करा (Nifty साठी) ---
-    vix_data = yf.download("^VIX", interval="1d", period="30d")
-    vix_level = vix_data['Close'][-1] if not vix_data.empty else 15
+    # --- VIX डेटा लोड करा (फक्त Nifty साठी) ---
+    vix_level = 15 # Default VIX value
+    if symbol.upper() == '^NSEI' or symbol.upper() == '^BSESN':
+        vix_data = yf.download("^VIX", interval="1d", period="30d")
+        # इथे 'Close' कॉलम उपलब्ध असल्याची खात्री करा
+        if not vix_data.empty and 'Close' in vix_data.columns: 
+            vix_level = vix_data['Close'][-1]
+
 
     # --- प्रगत तांत्रिक इंडिकेटर जोडा ---
     df.ta.rsi(append=True)
@@ -81,12 +88,25 @@ def load_data_and_analyze(symbol, interval, period):
     return True
 
 def load_data_callback():
-    load_data_and_analyze(symbol, interval, period)
+    # Streamlit च्या कॅशिंग सिस्टीममुळे फंक्शनला थेट कॉल करा
+    load_data_and_analyze(st.session_state.symbol_input, st.session_state.interval_select, st.session_state.period_select)
+
+# सिम्बॉल, इंटरव्हल आणि पिरियडसाठी की जोडा
+with col_sym:
+    symbol = st.text_input("सिम्बॉल (उदा. ^NSEI, BTC-USD, EURUSD=X)", "^NSEI", key='symbol_input')
+with col_int:
+    interval = st.selectbox("टाइमफ्रेम", ["1h", "30m", "15m", "5m"], index=0, key='interval_select')
+with col_per:
+    period = st.selectbox("डेटा कालावधी (मागील दिवस)", ["5d", "10d", "30d"], index=0, key='period_select')
 
 with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("१. 📊 डेटा लोड करा", type="primary"):
-        load_data_callback()
+        # फंक्शन कॉल करण्यापूर्वी इनपुट व्हॅल्यूज session state मध्ये सेव्ह करा
+        st.session_state.symbol_input = symbol
+        st.session_state.interval_select = interval
+        st.session_state.period_select = period
+        load_data_and_analyze(symbol, interval, period)
 
 st.markdown("---")
 
@@ -98,7 +118,7 @@ def generate_call(risk_profile):
         return
 
     symbol_data = st.session_state.analysis_data
-    S, R, CMP, RSI, MA200, VIX, SENTIMENT, VOLUME_TREND = symbol_data.values()
+    S, R, CMP, RSI, MA200, VIX, SENTIMENT, VOLUME_TREND = [symbol_data[key] for key in ['S', 'R', 'CMP', 'RSI', 'MA200', 'VIX', 'SENTIMENT', 'VOLUME_TREND']]
     
     # --- Risk Profile Parameters ---
     if risk_profile == "LOW_RISK":
@@ -120,7 +140,7 @@ def generate_call(risk_profile):
     is_near_S = (CMP - S) < 0.005 * CMP and CMP < R
     
     Action = "WAIT (सिग्नल नाही)"
-    Entry_Point = SL = T1 = T2 = T3 = 0
+    Entry_Point = SL = T1 = T2 = T3 = "N/A"
 
     # BUY कॉल लॉजिक (सर्व 4 इंडिकेटर जुळल्यास)
     if is_near_R and is_bullish_confirmed: 
@@ -206,15 +226,16 @@ if st.session_state.df is not None:
             result = st.session_state.call_result
             
             # Entry, SL, Target Lines
-            fig.add_hline(y=result['Entry'], line_width=3, annotation_text="ENTRY", line_color='green')
-            fig.add_hline(y=result['SL'], line_width=3, annotation_text="SL", line_color='red')
+            if result['Entry'] != 'N/A':
+                fig.add_hline(y=result['Entry'], line_width=3, annotation_text="ENTRY", line_color='green')
+                fig.add_hline(y=result['SL'], line_width=3, annotation_text="SL", line_color='red')
             
             if result['RR'] == "HIGH_PROFIT":
                 # T1, T2, T3 (Quantum Targets)
                 fig.add_hline(y=result['T1'], line_width=1.5, line_dash='dot', annotation_text="T1", line_color='yellow')
                 fig.add_hline(y=result['T2'], line_width=1.5, line_dash='dot', annotation_text="T2", line_color='yellow')
                 fig.add_hline(y=result['T3'], line_width=2.5, line_dash='dash', annotation_text="TARGET 3", line_color='yellow')
-            else:
+            elif result['RR'] == "LOW_RISK" and result['T1'] != 'N/A':
                  fig.add_hline(y=result['T1'], line_width=2.5, line_dash='dash', annotation_text="TARGET 1", line_color='yellow')
         
         fig.update_layout(xaxis_rangeslider_visible=False, height=450, title=f"कॅन्डलस्टिक चार्ट ({data_info['Symbol']})")
@@ -235,12 +256,13 @@ if st.session_state.df is not None:
                 else: st.error("🔴 BUY PUT (SHORT)")
                 
                 # तपशीलवार आकडेवारी
-                st.metric("एन्ट्री", format_value(result['Entry'], data_info['Symbol']))
-                st.metric("स्टॉप लॉस (SL)", format_value(result['SL'], data_info['Symbol']))
-                st.markdown("---")
-                st.metric("टार्गेट १ (T1)", format_value(result['T1'], data_info['Symbol']))
-                if result['RR'] == "HIGH_PROFIT":
-                    st.metric("टार्गेट २ (T2)", format_value(result['T2'], data_info['Symbol']))
-                    st.metric("टार्गेट ३ (T3)", format_value(result['T3'], data_info['Symbol']))
+                if result['Entry'] != 'N/A':
+                    st.metric("एन्ट्री", format_value(result['Entry'], data_info['Symbol']))
+                    st.metric("स्टॉप लॉस (SL)", format_value(result['SL'], data_info['Symbol']))
+                    st.markdown("---")
+                    st.metric("टार्गेट १ (T1)", format_value(result['T1'], data_info['Symbol']))
+                    if result['RR'] == "HIGH_PROFIT":
+                        st.metric("टार्गेट २ (T2)", format_value(result['T2'], data_info['Symbol']))
+                        st.metric("टार्गेट ३ (T3)", format_value(result['T3'], data_info['Symbol']))
         else:
              st.info("कॉल जनरेट करण्यासाठी बटण दाबा.")
